@@ -6,7 +6,7 @@
 
 用于加载开源模型
 
-### 1.2 api_warpper
+### 1.2 api_encap
 
 用于将模型封装为类openai的api
 
