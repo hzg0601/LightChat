@@ -14,7 +14,8 @@ from torch import Tensor
 from torch.nn import functional as F
 import torch.nn as nn
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer,AutoModel
+
 
 
 @dataclasses.dataclass
@@ -103,11 +104,21 @@ def apply_compressed_weight(module, compressed_state_dict, target_device, prefix
         )
 
 
-def load_compress_model(model_path, device, torch_dtype, use_fast, revision="main"):
+def load_compress_model(model_path:str, 
+                        tokenizer_path:str,
+                        device:str, 
+                        torch_dtype:torch.dtype, 
+                        use_fast:bool=False, 
+                        revision="main"):
     # partially load model
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_path, use_fast=use_fast, revision=revision
-    )
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path, use_fast=use_fast, revision=revision
+        )
+    except TypeError:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path, use_fast=~use_fast, revision=revision
+        )
 
     with init_empty_weights():
         config = AutoConfig.from_pretrained(
@@ -116,7 +127,10 @@ def load_compress_model(model_path, device, torch_dtype, use_fast, revision="mai
             torch_dtype=torch_dtype,
             revision=revision,
         )
-        model = AutoModelForCausalLM.from_config(config)
+        try:
+            model = AutoModelForCausalLM.from_config(config)
+        except NameError:
+            model = AutoModel.from_config(config)
         linear_weights = get_compressed_list(model)
 
     if os.path.exists(model_path):
