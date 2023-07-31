@@ -12,6 +12,7 @@ from packaging import version
 from packaging.version import parse
 import importlib
 import warnings
+from typing import Union, List, Tuple, Dict
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)  # set logger level
@@ -44,3 +45,18 @@ def is_ipex_available():
         )
         return False
     return True
+
+
+def get_common_args(methods:Union[function,classmethod], input_args:dict,exclude_keys:Union[str,list,tuple,set]=None):
+        """in case of args conflict, use their common args as a candidate"""
+        import inspect
+        common_kwargs_keys = set(inspect.getfullargspec(methods).args)&set(input_args.keys())
+        common_kwargs = {key:input_args[key] for key in common_kwargs_keys}
+        if exclude_keys:
+            if isinstance(exclude_keys,str):
+                common_kwargs.pop(exclude_keys)
+            else:
+                for key in exclude_keys:
+                    common_kwargs.pop(key)
+             
+        return common_kwargs
