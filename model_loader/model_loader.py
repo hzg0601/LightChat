@@ -1,8 +1,7 @@
 from transformers import (AutoModel,
                         AutoModelForCausalLM,
                         AutoTokenizer,
-                        AutoConfig,
-                        LlamaTokenizer)
+                        AutoConfig)
 
 import os
 import sys
@@ -18,12 +17,17 @@ from ..utils import (logger,
 class ModelInfo:
     model_name_or_path:str
     tokenizer_name_or_path:str=model_name_or_path
-    model_type: Optional[str] = "HF" # HF, GPTQ, LLAMACPP
+    model_cache_dir:str = None
+    tokenizer_cache_dir:str = None
+    model_type: str = "HF" # HF, GPTQ, LLAMACPP
     quantized: bool = False
+    model_quant_type: Optional[str] = "auto" # HF_no_quant,HF_quantized, HF_win_quant,HF_unix_quant,GPTQ_quant, GPTQ_quantized, LLAMACPP
     device:str="auto" # auto, cpu, gpu, mps,
     quant_bit:Optional[bool]=None # None, 4, 8
-    use_fast:bool=False #
+    use_fast:bool = False #
+    
     peft_name_or_path:Optional[Union[str,Tuple[str],List[str]]] = None
+    peft_cache_dir: str = None
     device_map: str = "auto" # None,"auto", "balanced", "balanced_low_0", "sequential"
     torch_dtype: Optional[torch.dtype] = torch.float16
     kwargs: Optional[dict] = None
@@ -31,10 +35,10 @@ class ModelInfo:
     use_triton: bool = False
     use_safetensors: bool = True
     quantized_model_path: Optional[str] = None 
-    ggml_file_name: Optional[str] = None
+    ggml_file_name: Optional[str] = None # set if you want save your own gptq model
 
 
-def recur_download_model(model_name_or_path:str,max_try:int=300) -> Path:
+def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) -> Path:
     """if given a path, return it directly; or else, call `snapshot_download`
         from `huggingface_hub` to download the repo recurrently, until the repo
         is downloaded or the time of try is greater than `max_try`.
@@ -56,7 +60,9 @@ def recur_download_model(model_name_or_path:str,max_try:int=300) -> Path:
         while True:
             try:
                 model_name_or_path = snapshot_download(
-                    model_name_or_path,resume_download=True)
+                    model_name_or_path,
+                    resume_download=True,
+                    cache_dir=cache_dir)
                 return model_name_or_path
             except:
                 turns += 1
@@ -70,7 +76,14 @@ class ModelLoader(object):
     def __init__(self,
                  model_info:ModelInfo
     ):
-        assert not (self.model_info.quantized and self.model_info.quant_bit), "can not quantize a model that has been quantized"
+        if model_info.quantized:
+            if model_info.quant_bit:
+                logger.warning("can not quantize a model that has been quantized,set `quant_bit` be `None` here.")
+                model_info.quant_bit = None
+        if model_info.model_type == "LLAMACPP":
+            if model_info.quant_bit:
+                logger.warning("llama-cpp model cannot be quantized again,set `quant_bit` be `None` here.")
+                model_info.quant_bit = None
 
         if model_info.device == "auto":
             model_info.device = ("cuda" if torch.cuda.is_available() else 
@@ -82,14 +95,14 @@ class ModelLoader(object):
                     model_info.device.lower().startswiths("xpu"),
                     "quantization can only be executed on gpu or xpu")
         
-        model_info.model_name_or_path = recur_download_model(model_info.model_name_or_path)
-        if model_info.model_name_or_path != model_info.tokenizer_name_or_path:
-            model_info.tokenizer_name_or_path = recur_download_model(model_info.tokenizer_name_or_path)
+        model_info.model_name_or_path = recur_download_model(
+            model_info.model_name_or_path,
+            cache_dir=model_info.model_cache_dir)
         
-        self.model_info = model_info
-
-        if (sys.platform == "windows") and self.model_info.quant_bit:
-            self.win_quant = True
+        if model_info.model_name_or_path != model_info.tokenizer_name_or_path:
+            model_info.tokenizer_name_or_path = recur_download_model(
+                model_info.tokenizer_name_or_path,
+                cache_dir=model_info.tokenizer_cache_dir)
 
         self.use_cuda = torch.cuda.is_available() and model_info.device.lower().startswith("cuda")
         self.use_xpu = (is_ipex_available() and 
@@ -108,46 +121,71 @@ class ModelLoader(object):
 
         if model_info.peft_name_or_path:
             if isinstance(model_info.peft_name_or_path,str):
-                model_info.peft_name_or_path = recur_download_model(model_info.peft_name_or_path)
+                model_info.peft_name_or_path = recur_download_model(model_info.peft_name_or_path,
+                                                                    cache_dir=model_info.peft_cache_dir)
             elif (isinstance(model_info.peft_name_or_path,tuple) or
                   isinstance(model_info.peft_name_or_path,list)):
                 temp = []
                 for peft_path in model_info.peft_name_or_path:
-                    peft_path = recur_download_model(peft_path)
+                    peft_path = recur_download_model(peft_path,cache_dir=model_info.peft_cache_dir)
                     temp.append(peft_path)
                 model_info.peft_name_or_path = temp
             else:
                 logger.error(f"unsupported type of peft_name_or_path: {model_info.peft_name_or_path}")
                 raise TypeError
 
-        
         self.model_info = model_info
+        self.model_quant_check()
 
-    def hf_args_check(self,model_info):
-        pass
+    def model_quant_check(self):
+        if (sys.platform == "windows") and self.model_info.quant_bit and self.model_info.model_type == "HF":
+            self.model_info.model_quant_type = "HF_win_quant"
+        elif (sys.platform != "windows") and self.model_info.quant_bit and self.model_info.model_type == "HF":
+            self.model_info.model_quant_type = "HF_unix_quant"
+        elif (not self.model_info.quant_bit ) and self.model_info.model_type == "HF":
+            self.model_info.model_quant_type = "HF_no_quant"
+        elif self.model_info.quantized and self.model_info.model_type == "HF":
+            self.model_info.model_quant_type =  "HF_quantized"
+        elif self.model_info.quant_bit and self.model_info.model_type == "GPTQ":
+            self.model_info.model_quant_type == "GPTQ_quant"
+        elif (not self.model_info.quant_bit) and self.model_info.model_type == "GPTQ":
+            self.model_info.model_quant_type == "GPTQ_quantized"
+        elif self.model_info.model_type == "LLAMACPP":
+            self.model_info.model_quant_type == "LLAMACPP"
 
-    def check_device_map(self,model_info):
+    def load_tokenizer(self):
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
+                                                      trust_remote_code=True,
+                                                      use_fast=self.model_info.use_fast)
+        except TypeError:
+            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
+                                                      trust_remote_code=True,
+                                                      use_fast=~self.model_info.use_fast)
+        return tokenizer
+
+    def check_device_map(self):
         if self.use_cuda:
             num_devices = torch.cuda.device_count()
         if self.use_xpu:
             num_devices = torch.xpu.device_count()
         if self.use_cuda and (num_devices < 2):
-            if model_info.device_map:
+            if self.model_info.device_map:
             
-                model_info.warning("Can only execute dispatching model when `model_info.device=cuda` and the number of gpus greater than 1 if use gpu")
-                model_info.device_map = None
+                logger.warning("Can only execute dispatching model when `model_info.device=cuda` and the number of gpus greater than 1 if use gpu")
+                self.model_info.device_map = None
         
         if self.use_xpu and (num_devices < 2) :
-            if model_info.device_map:
-                model_info.warning("Can only execute dispatching model when `model_info.device=xpu` and the number of xpus greater than 1 if use xpu")
-                model_info.device_map = None
+            if self.model_info.device_map:
+                logger.warning("Can only execute dispatching model when `model_info.device=xpu` and the number of xpus greater than 1 if use xpu")
+                self.model_info.device_map = None
 
         if not self.use_cuda and not self.use_xpu:
-            if model_info.device_map:
-                model_info.warning("can only dispatch model when use cuda or xpu")
-                model_info.device_map = None
+            if self.model_info.device_map:
+                logger.warning("can only dispatch model when use cuda or xpu")
+                self.model_info.device_map = None
 
-    def load_hf(self):
+    def load_hf_general(self):
         """A function that loads a model from `transformers`
         """
         
@@ -175,18 +213,11 @@ class ModelLoader(object):
                                                         config=model_config,
                                                         trust_remote_code=True,
                                                         **kwargs)
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                      trust_remote_code=True,
-                                                      use_fast=self.model_info.use_fast)
-        except TypeError:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                      trust_remote_code=True,
-                                                      use_fast=~self.model_info.use_fast)
+        tokenizer = self.load_tokenizer()
             
         return model, tokenizer
 
-    def load_win_hf_compression(self) :
+    def load_hf_win_quant(self) :
         from compression import load_compress_model
         model,tokenizer = load_compress_model(model_path=self.model_info.model_name_or_path,
                                                 tokenizer_path=self.model_info.tokenizer_name_or_path,
@@ -208,27 +239,13 @@ class ModelLoader(object):
             model = Llama(model_path=file_path,n_gpu_layers=2000)
         else:
             model = Llama(model_path=file_path)
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=self.model_info.use_fast,
-                                                  trust_remote_code=True)
-        except TypeError:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=~self.model_info.use_fast,
-                                                  trust_remote_code=True)
+        tokenizer = self.load_tokenizer()
         return model, tokenizer
     
-    def load_quantized_gptq(self):
+    def load_gptq_quantized(self):
         assert self.use_cuda, "gptq models are only supported on cuda device"
         from auto_gptq import AutoGPTQForCausalLM
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=self.model_info.use_fast,
-                                                  trust_remote_code=True)
-        except TypeError:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=~self.model_info.use_fast,
-                                                  trust_remote_code=True)
+        tokenizer = self.load_tokenizer()
         model = AutoGPTQForCausalLM.from_quantized(self.model_info.model_name_or_path,
                                                     device_map=self.model_info.device_map,
                                                     trust_remote_code=True,
@@ -236,19 +253,11 @@ class ModelLoader(object):
                                                     use_triton=False,
                                                     quantize_config=None)
         return model, tokenizer
-        pass
     
-    def load_and_quantize_gptq(self):
+    def load_gptq_and_quantize(self):
         assert self.use_cuda, "gptq models are only supported on cuda device"
         from auto_gptq import AutoGPTQForCausalLM,BaseQuantizeConfig
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=self.model_info.use_fast,
-                                                  trust_remote_code=True)
-        except TypeError:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_info.tokenizer_name_or_path,
-                                                  use_fast=~self.model_info.use_fast,
-                                                  trust_remote_code=True)
+        tokenizer = self.load_tokenizer()
         quantize_config = BaseQuantizeConfig(bits=self.model_info.quant_bit,
                                              group_size=self.model_info.group_size,
                                              desc_act=False)
@@ -279,14 +288,24 @@ class ModelLoader(object):
         return model
 
     def __call__(self):
-        if self.model_info.model_type == "HF":
-            pass
-        elif self.model_info.model_type == "GPTQ":
-            pass
-        elif self.model_info.model_type == "LLAMACPP":
-            pass
+        if self.model_info.model_quant_type in ("HF_no_quant","HF_quantized","HF_unix_quant") :
+            model,tokenizer = self.load_hf_general()
+        elif self.model_info.model_quant_type == "HF_win_quant":
+            model,tokenizer = self.load_hf_win_quant()
+        elif self.model_info.model_quant_type == "GPTQ_quantized":
+            model, tokenizer = self.load_gptq_quantized()
+        elif self.model_info.model_quant_type == "GPTQ_quant":
+            model, tokenizer = self.load_gptq_and_quantize()
+        elif self.model_info.model_quant_type == "LLAMACPP":
+            model,tokenizer = self.load_llamacpp()
         else:
-            print("Unspported currently!")
+            print(("Unsupported model_type, quantized and quant_bits combination!,"
+                   "`model_quant_type` must be one of "
+                   "`HF_no_quant,HF_quantized,HF_win_quant,HF_unix_quant,GPT_quantized,GPTQ_quant,LLAMACPP` or `auto`."
+                   ))
             raise TypeError
+        if self.model_info.peft_name_or_path:
+            model = self.load_peft(model)
         
-
+        return model, tokenizer
+    
