@@ -65,6 +65,7 @@ def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) 
     else:
         from huggingface_hub import snapshot_download
         turns = 0
+        logger.info(f"Downloading the model {model_name_or_path}...")
         while True:
             try:
                 model_name_or_path = snapshot_download(
