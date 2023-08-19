@@ -9,7 +9,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Union,Optional,Tuple,List,Literal
 from pathlib import Path
 import torch
-
 from utils import (logger,
                     is_ipex_available)
 
@@ -59,21 +58,30 @@ def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) 
     Returns:
         Path: the local path of `model_name_or_path` 
     """
-
+    model_path_temp = os.path.join(
+            os.getenv("HOME"),
+            ".cache/huggingface/hub",
+            "models--" + model_name_or_path.replace("/", "--"),
+            "snapshots/",
+        )
     if os.path.exists(model_name_or_path):
+        return model_name_or_path
+    elif os.path.exists(model_path_temp):
         return model_name_or_path
     else:
         from huggingface_hub import snapshot_download
         turns = 0
-        logger.info(f"Downloading the model {model_name_or_path}...")
+        logger.info(f"Downloading {model_name_or_path}...")
         while True:
             try:
                 model_name_or_path = snapshot_download(
                     model_name_or_path,
                     resume_download=True,
                     cache_dir=cache_dir)
+                logger.info(f"downloading {model_name_or_path} done.")
                 return model_name_or_path
             except:
+                logger.info("downloading failed, retry...")
                 turns += 1
                 if turns > max_try:
                     logger.error(f"""the times of calling `snapshot_download` are greater than `max_try`:{max_try},
