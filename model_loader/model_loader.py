@@ -102,9 +102,10 @@ class ModelLoader(object):
                                   "mps" if torch.backends.mps.is_available() else 
                                   "cpu")
         if model_info.quant_bit:
-            assert ((model_info.device.lower().startswith("cuda") or
-                    model_info.device.lower().startswiths("xpu")),
-                    "quantization can only be executed on gpu or xpu")
+           if not ((model_info.device.lower().startswith("cuda") or
+                    model_info.device.lower().startswiths("xpu"))):
+                logger.error("quantization can only be executed on gpu or xpu")
+                raise KeyError
         
         model_info.model_name_or_path = recur_download_model(
             model_info.model_name_or_path,
@@ -334,6 +335,7 @@ class ModelLoader(object):
         return model
 
     def __call__(self):
+        logger.info(f"loading model {self.model_info.model_name_or_path}...")
         if self.model_info.model_quant_type in ("HF_no_quant","HF_quantized","HF_unix_quant") :
             model,tokenizer = self.load_hf_general()
         elif self.model_info.model_quant_type == "HF_win_quant":
@@ -352,11 +354,12 @@ class ModelLoader(object):
             raise TypeError
         if "HF" in self.model_info.model_quant_type and self.model_info.peft_name_or_path:
             model = self.load_peft(model)
-        
+        logger.info(f"Model {self.model_info.model_name_or_path} is loaded.") 
         return model, tokenizer
     
 if __name__ == "__main__":
     model_info = ModelInfo(model_name_or_path="THUDM/chatglm2-6b")
 
-    model,tokenizer = ModelLoader(model_info)
-
+    loader = ModelLoader(model_info)
+    model,tokenizer = loader()
+    print("done!")
