@@ -240,17 +240,17 @@ class ModelLoader(object):
         used_kwargs = self.inspect_params(AutoModel.from_config, self.model_info.kwargs)
         kwargs = {**kwargs, **used_kwargs}
         try:
-            model = AutoModel.from_config(self.model_info.model_name_or_path,
+            model = AutoModel.from_pretrained(self.model_info.model_name_or_path,
                                             config=model_config,
                                             trust_remote_code=True,
                                             **kwargs)
         except NameError:
-            model = AutoModelForCausalLM.from_config(self.model_info.model_name_or_path,
+            model = AutoModelForCausalLM.from_pretrained(self.model_info.model_name_or_path,
                                                         config=model_config,
                                                         trust_remote_code=True,
                                                         **kwargs)
         except ImportError:
-            model = AutoModelForCausalLM.from_config(self.model_info.model_name_or_path,
+            model = AutoModelForCausalLM.from_pretrained(self.model_info.model_name_or_path,
                                                         config=model_config,
                                                         trust_remote_code=False,
                                                         **kwargs)
