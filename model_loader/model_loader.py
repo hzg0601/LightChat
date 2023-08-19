@@ -5,37 +5,45 @@ from transformers import (AutoModel,
 
 import os
 import sys
-
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Union,Optional,Tuple,List,Literal
 from pathlib import Path
 import torch
 
-from ..utils import (logger,
+from utils import (logger,
                     is_ipex_available)
 
 
 class ModelInfo:
     model_name_or_path:str
-    tokenizer_name_or_path:str=model_name_or_path
     model_cache_dir:str = None
-    tokenizer_cache_dir:str = None
+    tokenizer_name_or_path:str=None
+    tokenizer_cache_dir:str = None    
+    peft_name_or_path:Optional[Union[str,Tuple[str],List[str]]] = None
+    peft_cache_dir: str = None
+
     model_type: str = "HF" # HF, GPTQ, LLAMACPP
     quantized: bool = False
     model_quant_type: Optional[str] = "auto" # HF_no_quant,HF_quantized, HF_win_quant,HF_unix_quant,GPTQ_quant, GPTQ_quantized, LLAMACPP
     device:str="auto" # auto, cpu, gpu, mps,
     quant_bit:Optional[bool]=None # None, 4, 8
     use_fast:bool = False #
-    
-    peft_name_or_path:Optional[Union[str,Tuple[str],List[str]]] = None
-    peft_cache_dir: str = None
+
     device_map: str = "auto" # None,"auto", "balanced", "balanced_low_0", "sequential"
     torch_dtype: Optional[torch.dtype] = torch.float16
-    kwargs: Optional[dict] = None
+
     group_size:int = 128
     use_triton: bool = False
     use_safetensors: bool = True
     quantized_model_path: Optional[str] = None 
     ggml_file_name: Optional[str] = None # set if you want save your own gptq model
+
+    kwargs: Optional[dict] = None # all other kwargs
+
+    def __init__(self,**kwargs):
+        for key, value in kwargs.items():
+            setattr(self,key,value)
+
 
 
 def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) -> Path:
@@ -75,7 +83,10 @@ def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) 
 class ModelLoader(object):
     def __init__(self,
                  model_info:ModelInfo
-    ):
+    ):  
+        if not model_info.tokenizer_name_or_path:
+            model_info.tokenizer_name_or_path = model_info.model_name_or_path
+
         if model_info.quantized:
             if model_info.quant_bit:
                 logger.warning("can not quantize a model that has been quantized,set `quant_bit` be `None` here.")
@@ -91,8 +102,8 @@ class ModelLoader(object):
                                   "mps" if torch.backends.mps.is_available() else 
                                   "cpu")
         if model_info.quant_bit:
-            assert (model_info.device.lower().startswith("cuda") or
-                    model_info.device.lower().startswiths("xpu"),
+            assert ((model_info.device.lower().startswith("cuda") or
+                    model_info.device.lower().startswiths("xpu")),
                     "quantization can only be executed on gpu or xpu")
         
         model_info.model_name_or_path = recur_download_model(
@@ -163,6 +174,20 @@ class ModelLoader(object):
                                                       trust_remote_code=True,
                                                       use_fast=~self.model_info.use_fast)
         return tokenizer
+    
+    def inspect_params(self,class_or_function,kwargs):
+        if not kwargs:
+            return {}
+        
+        import inspect
+        class_or_func_kwargs = inspect.getfullargspec(class_or_function).args
+        common_set = set(class_or_func_kwargs) & set(kwargs.keys())
+        common_kwargs = {key:kwargs[key] for key in common_set}
+        unuse_kwargs = set(kwargs.keys()) - common_set
+        logger.warning(f"Following args are not compactible with {class_or_function.__name__} thereby unused:")
+        logger.warning(unuse_kwargs)
+        return common_kwargs
+
 
     def check_device_map(self):
         if self.use_cuda:
@@ -186,15 +211,15 @@ class ModelLoader(object):
                 self.model_info.device_map = None
 
     def load_hf_general(self):
-        """A function that loads a model from `transformers`
+        """Load a model that compactible with `transformers`
         """
         
         model_config = AutoConfig.from_pretrained(self.model_info.model_name_or_path,trust_remote_code=True)
         kwargs = {}
         if self.model_info.quant_bit and sys.platform != "windows":
             from bitsandbytes import BitsAndBytesConfig
-            quant_config = BitsAndBytesConfig(load_in_8bit=self.model_info.quant_bit=8,
-                                            load_in_4bit=self.model_info.quant_bit=4,
+            quant_config = BitsAndBytesConfig(load_in_8bit=self.model_info.quant_bit==8,
+                                            load_in_4bit=self.model_info.quant_bit==4,
                                             llm_int8_threshold=6.0,
                                             llm_int8_has_fp16_weights=False
                                             )
@@ -202,7 +227,8 @@ class ModelLoader(object):
         if self.model_info.device_map:
             kwargs["device_map"] = self.model_info.device_map
         kwargs['torch_dtype'] = self.model_info.torch_dtype
-
+        used_kwargs = self.inspect_params(AutoModel.from_config, self.model_info.kwargs)
+        kwargs = {**kwargs, **used_kwargs}
         try:
             model = AutoModel.from_config(self.model_info.model_name_or_path,
                                             config=model_config,
@@ -213,12 +239,18 @@ class ModelLoader(object):
                                                         config=model_config,
                                                         trust_remote_code=True,
                                                         **kwargs)
+        except ImportError:
+            model = AutoModelForCausalLM.from_config(self.model_info.model_name_or_path,
+                                                        config=model_config,
+                                                        trust_remote_code=False,
+                                                        **kwargs)
         tokenizer = self.load_tokenizer()
             
         return model, tokenizer
 
     def load_hf_win_quant(self) :
         from compression import load_compress_model
+
         model,tokenizer = load_compress_model(model_path=self.model_info.model_name_or_path,
                                                 tokenizer_path=self.model_info.tokenizer_name_or_path,
                                                 device=self.model_info.device,
@@ -227,22 +259,31 @@ class ModelLoader(object):
             
 
     def load_llamacpp(self):
+        """load a llama-cpp model based on llama-cpp-python library"""
         from llama_cpp import Llama
         import re
         pattern = self.model_info.ggml_file_name if self.model_info.ggml_file_name else "*ggml*.bin"
         for dir_name,sub_dir, file in os.walk(self.model_info.model_name_or_path):
             
             if re.search(pattern,file):
-                file_path = os.path.join(dir_name,sub_dir,file)
+                file_path = os.path.join(dir_name,sub_dir)
                 break
+        used_kwargs = self.inspect_params(Llama,self.model_info.kwargs)
+        used_kwargs['model_path'] = file_path
+
         if self.use_cuda or self.use_xpu:
-            model = Llama(model_path=file_path,n_gpu_layers=2000)
-        else:
-            model = Llama(model_path=file_path)
+            if "n_gpu_layers" not in used_kwargs:
+                used_kwargs['n_gpu_layers'] = -1
+        if "lora_path" not in used_kwargs:
+            used_kwargs['lora_path'] = self.peft_path
+
+        model = Llama(**used_kwargs)
+
         tokenizer = self.load_tokenizer()
         return model, tokenizer
     
     def load_gptq_quantized(self):
+        """ load a quantized gptq model"""
         assert self.use_cuda, "gptq models are only supported on cuda device"
         from auto_gptq import AutoGPTQForCausalLM
         tokenizer = self.load_tokenizer()
@@ -255,6 +296,7 @@ class ModelLoader(object):
         return model, tokenizer
     
     def load_gptq_and_quantize(self):
+        """load and quantize a gptq model"""
         assert self.use_cuda, "gptq models are only supported on cuda device"
         from auto_gptq import AutoGPTQForCausalLM,BaseQuantizeConfig
         tokenizer = self.load_tokenizer()
@@ -264,8 +306,11 @@ class ModelLoader(object):
         examples = [tokenizer(
                     "auto-gptq is an easy-to-use model quantization library with user-friendly apis, based on GPTQ algorithm."
                     )]
+        used_kwargs = self.inspect_params(AutoGPTQForCausalLM.from_pretrained, self.model_info.kwargs)
+        
         model = AutoGPTQForCausalLM.from_pretrained(self.model_info.model_name_or_path,
-                                                    quantize_config)
+                                                    quantize_config=quantize_config,
+                                                    **used_kwargs)
         
         model.quantize(examples)
         if self.model_info.quantized_model_path:
@@ -274,6 +319,7 @@ class ModelLoader(object):
         return model, tokenizer
 
     def load_peft(self,model):
+        """load a peft based on peft.PeftModel"""
         from peft import PeftModel
         if isinstance(self.model_info.peft_name_or_path,str):
             model = PeftModel.from_pretrained(model,
@@ -304,8 +350,13 @@ class ModelLoader(object):
                    "`HF_no_quant,HF_quantized,HF_win_quant,HF_unix_quant,GPT_quantized,GPTQ_quant,LLAMACPP` or `auto`."
                    ))
             raise TypeError
-        if self.model_info.peft_name_or_path:
+        if "HF" in self.model_info.model_quant_type and self.model_info.peft_name_or_path:
             model = self.load_peft(model)
         
         return model, tokenizer
     
+if __name__ == "__main__":
+    model_info = ModelInfo(model_name_or_path="THUDM/chatglm2-6b")
+
+    model,tokenizer = ModelLoader(model_info)
+

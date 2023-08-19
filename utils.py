@@ -47,7 +47,7 @@ def is_ipex_available():
     return True
 
 
-def get_common_args(methods:Union[function,classmethod], input_args:dict,exclude_keys:Union[str,list,tuple,set]=None):
+def get_common_args(methods, input_args:dict,exclude_keys:Union[str,list,tuple,set]=None):
         """in case of args conflict, use their common args as a candidate"""
         import inspect
         common_kwargs_keys = set(inspect.getfullargspec(methods).args)&set(input_args.keys())
