@@ -1,3 +1,7 @@
+"""
+Wrapper of local models, including models that can be loaded by 
+llama-cpp-python, auto-gptq, and transformers.
+"""
 from transformers import (AutoModel,
                         AutoModelForCausalLM,
                         AutoTokenizer,
@@ -270,7 +274,7 @@ class ModelLoader(object):
 
     def load_llamacpp(self):
         """load a llama-cpp model based on llama-cpp-python library"""
-        from llama_cpp import Llama
+        from llama_cpp import Llama,LlamaTokenizer
         import re
         pattern = self.model_info.ggml_file_name if self.model_info.ggml_file_name else "*ggml*.bin"
         for dir_name,sub_dir, file in os.walk(self.model_info.model_name_or_path):
@@ -289,7 +293,7 @@ class ModelLoader(object):
 
         model = Llama(**used_kwargs)
 
-        tokenizer = self.load_tokenizer()
+        tokenizer = LlamaTokenizer(model)
         return model, tokenizer
     
     def load_gptq_quantized(self):
