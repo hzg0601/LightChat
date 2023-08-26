@@ -9,11 +9,10 @@ from transformers import (AutoModel,
 
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Union,Optional,Tuple,List,Literal
 from pathlib import Path
 import torch
-from utils import (logger,
+from utils.util import (logger,
                     is_ipex_available)
 
 
