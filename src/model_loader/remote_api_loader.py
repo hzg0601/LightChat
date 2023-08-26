@@ -58,7 +58,8 @@ class ZhipuAPILoader(object):
         setattr(self,"completion_create",self.chat_completion_create)
         setattr(self,"completion_acreate",self.chat_completion_acreate)
         logger.info("Loading ZhipuAI...")
-
+    # 函数里只要有yield就会返回一个迭代器
+    # 需要额外用一个streamer才能实现，transformers.
     def chat_completion_create(self,
                     prompt: List[Dict[str,str]]=[
                                             {"role":"user","content":"你好，你可以做什么"}],
@@ -96,7 +97,7 @@ class ZhipuAPILoader(object):
             )
             if response["code"] == 200:
                 result = response["data"]["choices"][-1]["content"]
-                yield result
+                return result
             else:
                 logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
                 return
@@ -125,8 +126,8 @@ class ZhipuAPILoader(object):
 
 if __name__ == "__main__":
     chatglm_pro = ZhipuAPILoader(api_key="319eebee38566a54715a45018d0c8cb3.7DasTJjucxFwdwzQ")
-    result = chatglm_pro.completion_create(stream=False)
-    print(list(result))
+    res = chatglm_pro.completion_create(stream=False)
+    print(list(res))
     print("done!")
 
         
