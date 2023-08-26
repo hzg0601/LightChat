@@ -142,7 +142,7 @@ class ZhipuAPILoader(BaseAPILoader):
 
 
 if __name__ == "__main__":
-    chatglm_pro = ZhipuAPILoader(api_key="319eebee38566a54715a45018d0c8cb3.7DasTJjucxFwdwzQ")
+    chatglm_pro = ZhipuAPILoader()
     prompt = chatglm_pro.prompt_collator(content_user="你能做什么")
     res = chatglm_pro.completion_create(prompt=prompt,stream=True)
     for i in res:
