@@ -12,6 +12,8 @@ from packaging import version
 import importlib
 import warnings
 from typing import Union, List, Tuple, Dict
+from pathlib import Path
+
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)  # set logger level
@@ -59,3 +61,47 @@ def get_common_args(methods, input_args:dict,exclude_keys:Union[str,list,tuple,s
                     common_kwargs.pop(key)
              
         return common_kwargs
+
+
+def recur_download_model(model_name_or_path:str,max_try:int=300,cache_dir=None) -> Path:
+    """if given a path, return it directly; or else, call `snapshot_download`
+        from `huggingface_hub` to download the repo recurrently, until the repo
+        is downloaded or the time of try is greater than `max_try`.
+
+
+    Args:
+        model_name_or_path (str): the local_model_path or repo-id from huggingface_hub
+        max_try (int, optional): max time of call snapshot_download. Defaults to 300.
+
+    Returns:
+        Path: the local path of `model_name_or_path` 
+    """
+    model_path_temp = os.path.join(
+            os.getenv("HOME"),
+            ".cache/huggingface/hub",
+            "models--" + model_name_or_path.replace("/", "--"),
+            "snapshots/",
+        )
+    if os.path.exists(model_name_or_path):
+        return model_name_or_path
+    elif os.path.exists(model_path_temp):
+        return model_name_or_path
+    else:
+        from huggingface_hub import snapshot_download
+        turns = 0
+        logger.info(f"Downloading {model_name_or_path}...")
+        while True:
+            try:
+                model_name_or_path = snapshot_download(
+                    model_name_or_path,
+                    resume_download=True,
+                    cache_dir=cache_dir)
+                logger.info(f"downloading {model_name_or_path} done.")
+                return model_name_or_path
+            except:
+                logger.info("downloading failed, retry...")
+                turns += 1
+                if turns > max_try:
+                    logger.error(f"""the times of calling `snapshot_download` are greater than `max_try`:{max_try},
+                    please check your internet. """)
+                    raise ConnectionError

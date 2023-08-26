@@ -3,6 +3,7 @@ Load python library of remote APIs
 """
 import os
 import sys
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.util import logger
 from typing import List, Dict
 import zhipuai
@@ -37,8 +38,8 @@ class ZhipuAPILoader(BaseAPILoader):
         logger.info("Loading ZhipuAI...")
 
     def chat_completion_create(self,
-                    prompt: List[Dict[str,str]]=[{"role":"system","content":"你是一个人工智能助手"},
-                                            {"role":"user","content":"你好。"}],
+                    prompt: List[Dict[str,str]]=[
+                                            {"role":"user","content":"你好，你可以做什么"}],
                     model:str = "chatglm_pro",
                     top_p:float=0.7,
                     temperature:float=0.9,
@@ -71,7 +72,8 @@ class ZhipuAPILoader(BaseAPILoader):
                 temperature = temperature
             )
             if response["code"] == 200:
-                return response["msg"]
+                result = response["data"]["choices"][-1]["content"]
+                yield result
             else:
                 logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
                 return
@@ -91,7 +93,7 @@ class ZhipuAPILoader(BaseAPILoader):
                     )
 
         if response["code"] == 200:
-            yield response["msg"]
+            yield response["data"]["choices"][-1]["content"]
         else:
             logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
             return 
@@ -131,7 +133,8 @@ class ZhipuAPILoader(BaseAPILoader):
                 temperature = temperature
             )
             if response["code"] == 200:
-                return response["msg"]
+                result = response["data"]["choices"][-1]["content"]
+                yield result
             else:
                 logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
                 return
@@ -151,7 +154,7 @@ class ZhipuAPILoader(BaseAPILoader):
                     )
 
         if response["code"] == 200:
-            yield response["msg"]
+            yield response["data"]["choices"][-1]["content"]
         else:
             logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
             return 
@@ -160,6 +163,8 @@ if __name__ == "__main__":
     chatglm_pro = ZhipuAPILoader(api_key="319eebee38566a54715a45018d0c8cb3.7DasTJjucxFwdwzQ")
     result = chatglm_pro.chat_completion_create(stream=False)
     print(list(result))
+    print("done!")
+
         
         
 
