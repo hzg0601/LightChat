@@ -6,7 +6,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.util import logger
 from typing import List, Dict,Union
-
+from transformers.generation import TextStreamer
 class BaseAPILoader(object):
 
     def prompt_collator(self,
@@ -47,7 +47,7 @@ class BaseAPILoader(object):
         logger.error("Embedding is not supported currently!")
         raise AttributeError
 
-class ZhipuAPILoader(object):
+class ZhipuAPILoader(BaseAPILoader):
     
     def __init__(self,
                  api_key:str=None) -> None:
@@ -60,16 +60,34 @@ class ZhipuAPILoader(object):
         logger.info("Loading ZhipuAI...")
     # 函数里只要有yield就会返回一个迭代器
     # 需要额外用一个streamer才能实现，transformers.
-    def chat_completion_create(self,
-                    prompt: List[Dict[str,str]]=[
-                                            {"role":"user","content":"你好，你可以做什么"}],
+
+    def chat_completion_create_oneshot(self,
+                    prompt: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
                     model:str = "chatglm_pro",
                     top_p:float=0.7,
                     temperature:float=0.9,
-                    stream:bool=False,
-                    **kwargs):
-        
-        if stream:
+                    **kwargs
+                    ):
+            response = self.zhipuai.model_api.invoke(
+                model = model,
+                prompt = prompt,
+                top_p = top_p,
+                temperature = temperature
+            )
+            if response["code"] == 200:
+                result = response["data"]["choices"][-1]["content"]
+                return result
+            else:
+                logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
+                return
+            
+    def chat_completion_create_stream(self,
+                    prompt: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
+                    model:str = "chatglm_pro",
+                    top_p:float=0.7,
+                    temperature:float=0.9,
+                    **kwargs
+                    ):
             response = self.zhipuai.model_api.sse_invoke(
                 model = model,
                 prompt = prompt,
@@ -84,23 +102,22 @@ class ZhipuAPILoader(object):
                     return event.data
                 elif event.event == "finish":
                     yield event.data
-                    print(event.meta)
+                    logger.info(event.meta)
                 else:
-                    print(event.data)
+                    logger.error("Something get wrong with ZhipuAPILoader.chat_completion_create_stream")
+                    logger.error(event.data)
+            
+        
+    def chat_completion_create(self,**kwargs):
+        assert "prompt" in kwargs, ("accepted kwargs are model, prompt, temperature, top_p, "
+                                    "stream, in which prompt is required")
+        stream = kwargs.pop("stream",False)
 
+        if stream:
+            return self.chat_completion_create_stream(**kwargs)
         else:
-            response = self.zhipuai.model_api.invoke(
-                model = model,
-                prompt = prompt,
-                top_p = top_p,
-                temperature = temperature
-            )
-            if response["code"] == 200:
-                result = response["data"]["choices"][-1]["content"]
-                return result
-            else:
-                logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
-                return
+            return self.chat_completion_create_oneshot(**kwargs)
+        
 
     def chat_completion_acreate(self,
                     prompt: List[Dict[str,str]]=[{"role":"system","content":"你是一个人工智能助手"},
@@ -126,8 +143,12 @@ class ZhipuAPILoader(object):
 
 if __name__ == "__main__":
     chatglm_pro = ZhipuAPILoader(api_key="319eebee38566a54715a45018d0c8cb3.7DasTJjucxFwdwzQ")
-    res = chatglm_pro.completion_create(stream=False)
-    print(list(res))
+    prompt = chatglm_pro.prompt_collator(content_user="你能做什么")
+    res = chatglm_pro.completion_create(prompt=prompt,stream=True)
+    for i in res:
+        print(i)
+    res = chatglm_pro.completion_create(prompt=prompt,stream=False)
+    print(res)
     print("done!")
 
         
