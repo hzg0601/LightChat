@@ -1,8 +1,22 @@
 import os
 import sys
-import openai
 from typing import Union, List, Tuple, Literal,Dict
 from llama_cpp import Llama
+
+
+def chat(model):
+    if hasattr(model, "chat"):
+        return model.chat
+    elif hasattr(model, "generate"):
+        pass
+    else:
+        pass
+
+def stream_chat(model):
+    if hasattr(model,"stream_chat"):
+        return model.stream_chat
+    elif hasattr(model,"chat"):
+        pass
 
 
 class ChatCompletion(object):

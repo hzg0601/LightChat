@@ -6,7 +6,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.util import logger
 from typing import List, Dict,Union
-from transformers.generation import TextStreamer
+
+
 class BaseAPILoader(object):
 
     def prompt_collator(self,
@@ -47,7 +48,7 @@ class BaseAPILoader(object):
         logger.error("Embedding is not supported currently!")
         raise AttributeError
 
-class ZhipuAPILoader(BaseAPILoader):
+class ZhipuAILoader(BaseAPILoader):
     
     def __init__(self,
                  api_key:str=None) -> None:
@@ -138,11 +139,31 @@ class ZhipuAPILoader(BaseAPILoader):
         else:
             logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
             return 
-    
+
+
+API_TYPE_DICT = {
+    "ZhipuAI": ZhipuAILoader
+}
+
+class RemoteAPILoader(object):
+    def __init__(self,
+                 api_type:str = "ZhipuAI",
+                 api_key:str = None
+                 ) -> None:
+        self.api_type = api_type
+        remote_api = API_TYPE_DICT[api_type]
+        for _attr in ["chat_completion_create",
+                      "chat_completion_acreate",
+                      "completion_create",
+                      "completion_acreate",
+                      "embedding"]:
+            setattr(setattr,_attr,getattr(remote_api,_attr))
+        logger.info(f"Loading remote api {api_type} done!")
+
 
 
 if __name__ == "__main__":
-    chatglm_pro = ZhipuAPILoader()
+    chatglm_pro = ZhipuAILoader()
     prompt = chatglm_pro.prompt_collator(content_user="你能做什么")
     res = chatglm_pro.completion_create(prompt=prompt,stream=True)
     for i in res:

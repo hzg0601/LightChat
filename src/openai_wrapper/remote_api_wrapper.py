@@ -3,20 +3,7 @@ import sys
 import openai
 from typing import Union, List, Tuple, Literal,Dict
 from utils import get_common_args
-
-def chat(model):
-    if hasattr(model, "chat"):
-        return model.chat
-    elif hasattr(model, "generate"):
-        pass
-    else:
-        pass
-
-def stream_chat(model):
-    if hasattr(model,"stream_chat"):
-        return model.stream_chat
-    elif hasattr(model,"chat"):
-        pass
+from model_loader.remote_api_loader import
 
 
 class ChatCompletion(object):
@@ -110,6 +97,7 @@ class Completion(object):
                frequency_penalty:float=0,
                best_of:int=1,
                logit_bias:dict=None,
+               **kwargs
                ):
         """_summary_
 
