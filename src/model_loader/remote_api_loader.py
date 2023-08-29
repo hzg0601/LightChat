@@ -6,6 +6,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.util import logger
 from typing import List, Dict,Union
+import inspect
+import asyncio
 
 
 class BaseAPILoader(object):
@@ -28,19 +30,19 @@ class BaseAPILoader(object):
             prompt.append(prompt_dict)
         return prompt
     
-    def chat_completion_create(self):
+    def create_chat_completion(self):
         logger.error("Chat Completion is not supported currently!")
         raise AttributeError
     
-    def completion_create(self):
+    def create_completion(self):
         logger.error("Completion is not supported currently!")
         raise AttributeError
     
-    def chat_completion_acreate(self):
+    def acreate_chat_completion(self):
         logger.error("Chat Completion is not supported currently!")
         raise AttributeError
     
-    def completion_acreate(self):
+    def acreate_completion(self):
         logger.error("Completion is not supported currently!")
         raise AttributeError
 
@@ -56,14 +58,12 @@ class ZhipuAILoader(BaseAPILoader):
         import zhipuai
         self.zhipuai = zhipuai
         self.zhipuai.api_key = api_key
-        setattr(self,"completion_create",self.chat_completion_create)
-        setattr(self,"completion_acreate",self.chat_completion_acreate)
         logger.info("Loading ZhipuAI...")
     # 函数里只要有yield就会返回一个迭代器
     # 需要额外用一个streamer才能实现，transformers.
 
-    def chat_completion_create_oneshot(self,
-                    prompt: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
+    def create_oneshot(self,
+                    message: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
                     model:str = "chatglm_pro",
                     top_p:float=0.7,
                     temperature:float=0.9,
@@ -71,7 +71,7 @@ class ZhipuAILoader(BaseAPILoader):
                     ):
             response = self.zhipuai.model_api.invoke(
                 model = model,
-                prompt = prompt,
+                prompt = message,
                 top_p = top_p,
                 temperature = temperature
             )
@@ -82,8 +82,8 @@ class ZhipuAILoader(BaseAPILoader):
                 logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
                 return
             
-    def chat_completion_create_stream(self,
-                    prompt: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
+    def create_stream(self,
+                    message: List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
                     model:str = "chatglm_pro",
                     top_p:float=0.7,
                     temperature:float=0.9,
@@ -91,7 +91,7 @@ class ZhipuAILoader(BaseAPILoader):
                     ):
             response = self.zhipuai.model_api.sse_invoke(
                 model = model,
-                prompt = prompt,
+                prompt = message,
                 top_p = top_p,
                 temperature = temperature,
                 incremental = True
@@ -105,29 +105,36 @@ class ZhipuAILoader(BaseAPILoader):
                     yield event.data
                     logger.info(event.meta)
                 else:
-                    logger.error("Something get wrong with ZhipuAPILoader.chat_completion_create_stream")
+                    logger.error("Something get wrong with ZhipuAPILoader.create_chat_completion_stream")
                     logger.error(event.data)
-            
-        
-    def chat_completion_create(self,**kwargs):
-        assert "prompt" in kwargs, ("accepted kwargs are model, prompt, temperature, top_p, "
-                                    "stream, in which prompt is required")
-        stream = kwargs.pop("stream",False)
+               
+    def create_chat_completion(self,
+                               model: str = "chatglm_pro",
+                               message:List[Dict[str,str]]=[{"role":"user","content":"你好，你可以做什么"}],
+                                top_p:float=0.7,
+                                temperature:float=0.9,
+                                stream:bool=False,
+                               **kwargs):
 
         if stream:
-            return self.chat_completion_create_stream(**kwargs)
+            return self.create_stream(model=model,
+                                    message=message,
+                                    top_p=top_p,
+                                    temperature=temperature)
         else:
-            return self.chat_completion_create_oneshot(**kwargs)
+            return self.create_oneshot(model=model,
+                                        message=message,
+                                        top_p=top_p,
+                                        temperature=temperature)
         
-
-    def chat_completion_acreate(self,
+    async def acreate_chat_completion(self,
                     prompt: List[Dict[str,str]]=[{"role":"system","content":"你是一个人工智能助手"},
                                             {"role":"user","content":"你好。"}],
                     model:str = "chatglm_pro",
                     top_p:float=0.7,
                     temperature:float=0.9,
                     **kwargs):
-        response = self.zhipuai.model_api.async_invoke(
+        response = await self.zhipuai.model_api.async_invoke(
                     model = model,
                     prompt = prompt,
                     top_p = top_p,
@@ -135,11 +142,62 @@ class ZhipuAILoader(BaseAPILoader):
                     )
 
         if response["code"] == 200:
-            yield response["data"]["choices"][-1]["content"] #? why return a generator?
+            task_id = response['data']['task_id']
+            status = "PROCESSING"
+            while status != "SUCCESS":
+                # await asyncio.sleep(3) # 
+                resp = self.zhipuai.model_api.query_async_invoke_result(task_id)
+                status = resp['data']['task_status']
+            return resp['data']['choices'][-1]['content']
         else:
             logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
             return 
+        
+    def create_completion(self,
+                               prompt:str="你好",
+                               model:str="chatglm_pro",
+                               top_p:float=0.7,
+                               temperature:float=0.9,
+                               stream:bool=False,
+                               **kwargs):
+        message = self.prompt_collator(content_user=prompt)
+        if stream:
+            return self.create_stream(model=model,
+                                    message=message,
+                                    top_p=top_p,
+                                    temperature=temperature)
+        else:
+            return self.create_oneshot(model=model,
+                                    message=message,
+                                    top_p=top_p,
+                                    temperature=temperature)
+    #? make it a sync function?    
+    async def acreate_completion(self,
+                    prompt:str="你好",
+                    model:str = "chatglm_pro",
+                    top_p:float=0.7,
+                    temperature:float=0.9,
+                    **kwargs):
+        message = self.prompt_collator(content_user=prompt)
+        response = self.zhipuai.model_api.async_invoke(
+                    model = model,
+                    prompt = message,
+                    top_p = top_p,
+                    temperature = temperature
+                    )
 
+        if response["code"] == 200:
+            task_id = response['data']['task_id']
+            status = "PROCESSING"
+            while status != "SUCCESS":
+                # await asyncio.sleep(3) # 
+                resp = self.zhipuai.model_api.query_async_invoke_result(task_id)
+                status = resp['data']['task_status']
+            return resp['data']['choices'][-1]['content']
+        else:
+            logger.info(f"error occurred, error code:{response['code']},error msg:{response['msg']}")
+            return 
+    
 
 API_TYPE_DICT = {
     "ZhipuAI": ZhipuAILoader
@@ -151,26 +209,27 @@ class RemoteAPILoader(object):
                  api_key:str = None
                  ) -> None:
         self.api_type = api_type
-        remote_api = API_TYPE_DICT[api_type]
-        for _attr in ["chat_completion_create",
-                      "chat_completion_acreate",
-                      "completion_create",
-                      "completion_acreate",
-                      "embedding"]:
-            setattr(setattr,_attr,getattr(remote_api,_attr))
+        remote_api = API_TYPE_DICT[api_type](api_key=api_key)
+        function_variables = [name for name, value in inspect.getmembers(remote_api)
+                      if inspect.ismethod(value) or name == "__init__"]
+        for _attr in function_variables:
+            setattr(self,_attr,getattr(remote_api,_attr))
         logger.info(f"Loading remote api {api_type} done!")
 
 
 
 if __name__ == "__main__":
-    chatglm_pro = ZhipuAILoader()
-    prompt = chatglm_pro.prompt_collator(content_user="你能做什么")
-    res = chatglm_pro.completion_create(prompt=prompt,stream=True)
-    for i in res:
-        print(i)
-    res = chatglm_pro.completion_create(prompt=prompt,stream=False)
+    chatglm_pro = RemoteAPILoader(api_key="319eebee38566a54715a45018d0c8cb3.7DasTJjucxFwdwzQ")
+    # res = chatglm_pro.create_completion(prompt="你能做什么",stream=False)
+    # print(res)
+    import time
+    start = time.time()
+    res = asyncio.run(chatglm_pro.acreate_completion(prompt="你能做什么"))
+    end = time.time()
+    print(f"edurance:{end-start}")
     print(res)
     print("done!")
+
 
         
         

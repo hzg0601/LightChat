@@ -1,26 +1,28 @@
+import torch
+
 MODEL_INFO_ARGS = {
-    model_name_or_path:None,
-    model_cache_dir:str = None,
-    tokenizer_name_or_path:str=None,
-    tokenizer_cache_dir:str = None,    
-    peft_name_or_path:Union[str,Tuple[str],List[str]] = None,
-    peft_cache_dir: str = None,
+    "model_name_or_path":None,
+    "model_cache_dir": None,
+    "tokenizer_name_or_path":None,
+    "tokenizer_cache_dir": None,    
+    "peft_name_or_path": None,
+    "peft_cache_dir":  None,
 
-    model_type: str = "HF", # HF, GPTQ, LLAMACPP
-    quantized: bool = False,
-    model_quant_type: str = "auto", # HF_no_quant,HF_quantized, HF_win_quant,HF_unix_quant,GPTQ_quant, GPTQ_quantized, LLAMACPP
-    device:str="auto", # auto, cpu, gpu, mps,
-    quant_bit:int=None, # None, 4, 8
-    use_fast:bool = False, #
+    "model_type":  "HF", # HF, GPTQ, LLAMACPP
+    "quantized": False,
+    "model_quant_type": "auto", # HF_no_quant,HF_quantized, HF_win_quant,HF_unix_quant,GPTQ_quant, GPTQ_quantized, LLAMACPP
+    "device":"auto", # auto, cpu, gpu, mps,
+    "quant_bit":None, # None, 4, 8
+    "use_fast":False, #
 
-    device_map: Union[str,dict] = "auto", # None,"auto", "balanced", "balanced_low_0", "sequential"
-    torch_dtype: Optional[torch.dtype] = torch.float16,
+    "device_map": "auto", # None,"auto", "balanced", "balanced_low_0", "sequential"
+    "torch_dtype":  torch.float16,
 
-    group_size:int = 128,
-    use_triton: bool = False,
-    use_safetensors: bool = True,
-    quantized_model_path: Optional[str] = None,
-    ggml_file_name: Optional[str] = None, # set if you want save your own gptq model
+    "group_size": 128,
+    "use_triton": False,
+    "use_safetensors": True,
+    "quantized_model_path": None,
+    "ggml_file_name": None, # set if you want save your own gptq model
 
-    kwargs: Optional[dict] = None, # all other kwargs
+    "kwargs": None, # all other kwargs
 }
